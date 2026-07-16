@@ -20,6 +20,9 @@ import unittest
 from unittest import mock
 
 import django
+from django.template import Context
+from django.template.loader import get_template
+from horizon import loaders
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'openstack_dashboard.settings')
 django.setup()
@@ -31,6 +34,24 @@ reporting = importlib.import_module(
 
 
 class SummaryStorageVersionTests(unittest.TestCase):
+
+    def test_details_template_owns_groupby_partial(self):
+        template_dir = os.path.join(
+            os.path.dirname(summary.__file__), 'templates')
+        panel_dirs = {'admin/rating_summary': template_dir}
+
+        with mock.patch.dict(loaders.panel_template_dirs, panel_dirs,
+                             clear=True):
+            template = get_template(
+                'admin/rating_summary/details.html').template
+            context = Context({
+                'project_id': 'project-1',
+                'groupby_list': ['type'],
+            })
+            with context.bind_template(template):
+                output = template.nodelist[0].blocks['main'].render(context)
+
+        self.assertIn('groupby_checkbox', output)
 
     @mock.patch.object(summary.api_keystone, 'tenant_list')
     @mock.patch.object(summary.api, 'cloudkittyclient')
