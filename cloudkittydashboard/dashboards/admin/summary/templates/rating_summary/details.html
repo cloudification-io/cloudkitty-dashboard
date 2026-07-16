@@ -10,8 +10,7 @@
 
 {% trans "Project ID:" %} {{ project_id }}
 
-{{ groupby_list|json_script:"groupby_list_config" }}
-  {% include "project/rating/groupby.html" %}
+  {% include "admin/rating_summary/groupby.html" %}
 {{ table.render }}
 
 {{ modules }}
