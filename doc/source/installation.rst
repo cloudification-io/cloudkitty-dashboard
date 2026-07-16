@@ -89,3 +89,15 @@ Here's an example of setting the grouping list to include
 .. code-block:: python
 
    OPENSTACK_CLOUDKITTY_GROUPBY_LIST = ['type', 'id', 'user_id']
+
+
+Storage API Version
+-------------------
+
+The rating panels use CloudKitty storage API v2 by default. Set the storage
+version to ``1`` to use the v1 Admin Rating Summary and Project Reporting
+implementations:
+
+.. code-block:: python
+
+   OPENSTACK_CLOUDKITTY_STORAGE_VERSION = 1

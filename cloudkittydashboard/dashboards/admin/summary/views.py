@@ -30,30 +30,42 @@ rate_postfix = getattr(settings,
                        'OPENSTACK_CLOUDKITTY_RATE_POSTFIX', None)
 
 
+def _uses_v1_storage():
+    return int(getattr(
+        settings, 'OPENSTACK_CLOUDKITTY_STORAGE_VERSION', 2)) == 1
+
+
 class IndexView(tables.DataTableView):
     template_name = 'admin/rating_summary/index.html'
     table_class = sum_tables.SummaryTable
 
     def get_data(self):
-        summary = api.cloudkittyclient(
-            self.request, version='2').summary.get_summary(
-            groupby=['project_id'], response_format='object')
+        if _uses_v1_storage():
+            data = api.cloudkittyclient(
+                self.request).report.get_summary(
+                    groupby=['tenant_id'], all_tenants=True)['summary']
+            project_key = 'tenant_id'
+        else:
+            summary = api.cloudkittyclient(
+                self.request, version='2').summary.get_summary(
+                groupby=['project_id'], response_format='object')
+            data = summary.get('results')
+            project_key = 'project_id'
 
         tenants, unused = api_keystone.tenant_list(self.request)
         tenants = {tenant.id: tenant.name for tenant in tenants}
-        data = summary.get('results')
 
-        total = sum([r.get('rate') for r in data])
+        total = sum([float(r.get('rate')) for r in data])
         data.append({
-            'project_id': 'ALL',
+            project_key: 'ALL',
             'rate': total,
         })
 
-        data = api.identify(data, key='project_id')
+        data = api.identify(data, key=project_key)
         for tenant in data:
-            tenant['tenant_id'] = tenant.get('project_id')
+            tenant['tenant_id'] = tenant.get(project_key)
             tenant['name'] = tenants.get(tenant.id, '-')
-            tenant['rate'] = utils.formatRate(tenant['rate'],
+            tenant['rate'] = utils.formatRate(float(tenant['rate']),
                                               rate_prefix, rate_postfix)
         data[-1]['name'] = _('Cloud Total')
         return data
@@ -75,7 +87,17 @@ class TenantDetailsView(tables.DataTableView):
         form = forms.CheckBoxForm(self.request.GET)
         groupby = form.get_selected_fields()
 
-        if tenant_id == 'ALL':
+        if _uses_v1_storage():
+            client = api.cloudkittyclient(self.request)
+            kwargs = {'groupby': ['res_type']}
+            if tenant_id == 'ALL':
+                kwargs['all_tenants'] = True
+            else:
+                kwargs['tenant_id'] = tenant_id
+            data = client.report.get_summary(**kwargs)['summary']
+            for item in data:
+                item['type'] = item.pop('res_type')
+        elif tenant_id == 'ALL':
             summary = api.cloudkittyclient(
                 self.request, version='2'
             ).summary.get_summary(groupby=groupby, response_format='object')
@@ -88,8 +110,9 @@ class TenantDetailsView(tables.DataTableView):
                 response_format='object',
             )
 
-        data = summary.get('results')
-        total = sum([r.get('rate') for r in data])
+        if not _uses_v1_storage():
+            data = summary.get('results')
+        total = sum([float(r.get('rate')) for r in data])
 
         if not groupby:
             data = [{'type': 'TOTAL', 'rate': total}]
@@ -98,6 +121,6 @@ class TenantDetailsView(tables.DataTableView):
             data.append({'type': 'TOTAL', 'rate': total})
             for item in data:
                 item['rate'] = utils.formatRate(
-                    item['rate'], rate_prefix, rate_postfix)
+                    float(item['rate']), rate_prefix, rate_postfix)
 
         return data

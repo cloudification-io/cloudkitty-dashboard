@@ -29,6 +29,47 @@ from cloudkittydashboard.api import cloudkitty as api
 from cloudkittydashboard import forms
 
 
+def _uses_v1_storage():
+    return int(getattr(
+        settings, 'OPENSTACK_CLOUDKITTY_STORAGE_VERSION', 2)) == 1
+
+
+def _build_reporting_data_v1(data):
+    services = {}
+    start_timestamp = None
+    end_timestamp = None
+
+    for dataframe in data.get('dataframes', []):
+        begin = dataframe['begin']
+        timestamp = int(time.mktime(datetime.datetime.strptime(
+            begin[:16], "%Y-%m-%dT%H:%M").timetuple()))
+        if start_timestamp is None or timestamp < start_timestamp:
+            start_timestamp = timestamp
+        if end_timestamp is None or timestamp > end_timestamp:
+            end_timestamp = timestamp
+
+        for resource in dataframe['resources']:
+            service_id = resource['service']
+            service_data = services.setdefault(
+                service_id, {'cumulated': 0, 'hourly': {}})
+            service_data['cumulated'] += decimal.Decimal(resource['rating'])
+            service_data['hourly'].setdefault(timestamp, 0)
+            service_data['hourly'][timestamp] += float(resource['rating'])
+
+    timestamp = start_timestamp
+    if end_timestamp:
+        while timestamp <= end_timestamp:
+            for service_data in services.values():
+                service_data['hourly'].setdefault(timestamp, 0)
+            timestamp += 3600
+
+    for service_data in services.values():
+        service_data['hourly'] = collections.OrderedDict(
+            sorted(service_data['hourly'].items()))
+
+    return services
+
+
 def _build_reporting_data(client, tenant_id, begin, end):
     """Build reporting data using v2 summary API.
 
@@ -138,9 +179,15 @@ class CostRepartitionTab(tabs.Tab):
             end = "%4d-%02d-%02dT23:59:59" % (today.year, today.month,
                                               today.day)
 
-        client = api.cloudkittyclient(request, version='2')
-        parsed_data = _build_reporting_data(
-            client, request.user.tenant_id, begin, end)
+        if _uses_v1_storage():
+            client = api.cloudkittyclient(request)
+            data = client.storage.get_dataframes(
+                begin=begin, end=end, tenant_id=request.user.tenant_id)
+            parsed_data = _build_reporting_data_v1(data)
+        else:
+            client = api.cloudkittyclient(request, version='2')
+            parsed_data = _build_reporting_data(
+                client, request.user.tenant_id, begin, end)
         return {'repartition_data': parsed_data, 'form': form}
 
     @property
