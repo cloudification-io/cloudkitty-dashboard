@@ -101,3 +101,7 @@ implementations:
 .. code-block:: python
 
    OPENSTACK_CLOUDKITTY_STORAGE_VERSION = 1
+
+The project Raw Usage page shows per-period resource quantities for both
+storage API versions. It reads stored quantities independently of their
+rating, so it also displays data rated at zero.

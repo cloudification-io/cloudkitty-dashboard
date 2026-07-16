@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% load i18n %}
+{% load static %}
+
+{% block title %}{% trans "Raw Usage" %}{% endblock %}
+
+{% block page_header %}
+  {% include "horizon/common/_page_header.html" with title=_("Raw Usage") %}
+{% endblock page_header %}
+
+{% block main %}
+<link rel="stylesheet" href="{% static 'cloudkitty/css/datepicker.css' %}">
+<script src="{% static 'cloudkitty/js/datepicker.js' %}" type="text/javascript" charset="utf-8"></script>
+
+<p class="help-block">
+  {% trans "Stored resource quantities are shown before pricing. Select one resource type to limit the data loaded from CloudKitty." %}
+</p>
+
+<form action="?" method="get" id="raw_usage_filter" class="form-inline">
+  <h4>{% trans "Filter usage data:" %}</h4>
+  <div class="form-group{% if form.resource_type.errors %} has-error{% endif %}">
+    <label for="{{ form.resource_type.id_for_label }}">{{ form.resource_type.label }}</label>
+    {{ form.resource_type }}
+    {% for error in form.resource_type.errors %}<span class="help-block">{{ error }}</span>{% endfor %}
+  </div>
+  <div class="datepicker form-group{% if form.start.errors %} has-error{% endif %}">
+    {% with datepicker_input=form.start datepicker_label="From" %}
+      {% include 'project/reporting/_datepicker_reporting.html' %}
+    {% endwith %}
+    {% for error in form.start.errors %}<span class="help-block">{{ error }}</span>{% endfor %}
+  </div>
+  <span class="datepicker-delimiter">
+    <span class="datepicker-delimiter-text">{% trans 'to' %}</span>
+  </span>
+  <div class="datepicker form-group{% if form.end.errors %} has-error{% endif %}">
+    {% with datepicker_input=form.end datepicker_label="To" %}
+      {% include 'project/reporting/_datepicker_reporting.html' %}
+    {% endwith %}
+    {% for error in form.end.errors %}<span class="help-block">{{ error }}</span>{% endfor %}
+  </div>
+  <button class="btn btn-primary" type="submit">{% trans "Apply" %}</button>
+</form>
+
+<script>
+  $(function () {
+    initDatepicker({
+      formId: 'raw_usage_filter',
+      startFieldName: '{{ form.start.name }}',
+      endFieldName: '{{ form.end.name }}'
+    });
+  });
+</script>
+
+{% if queried %}
+<div class="table-responsive">
+  <table class="table table-striped table-hover">
+    <thead>
+      <tr>
+        <th>{% trans "Period Start" %}</th>
+        <th>{% trans "Period End" %}</th>
+        <th>{% trans "Metric" %}</th>
+        <th>{% trans "Resource ID" %}</th>
+        <th>{% trans "Quantity" %}</th>
+        <th>{% trans "Unit" %}</th>
+        <th>{% trans "Details" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in usage_rows %}
+        <tr>
+          <td>{{ row.begin }}</td>
+          <td>{{ row.end }}</td>
+          <td>{{ row.metric }}</td>
+          <td>{{ row.resource_id }}</td>
+          <td>{{ row.quantity }}</td>
+          <td>{{ row.unit }}</td>
+          <td>{{ row.details|default:"-" }}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="7" class="text-center">{% trans "No usage data available" %}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

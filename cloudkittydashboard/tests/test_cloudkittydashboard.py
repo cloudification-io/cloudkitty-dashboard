@@ -21,6 +21,8 @@ Tests for `cloudkittydashboard` module.
 
 from cloudkittydashboard.dashboards.project.rating import \
     panel as rating_panel
+from cloudkittydashboard.dashboards.project.raw_usage import \
+    panel as raw_usage_panel
 from cloudkittydashboard.dashboards.project.reporting import \
     panel as reporting_panel
 from cloudkittydashboard.tests import base
@@ -37,3 +39,6 @@ class TestCloudkittydashboard(base.TestCase):
 
         panel_2 = project_dashboard.get_panel('reporting')
         self.assertEqual(reporting_panel.Project_reporting, panel_2.__class__)
+
+        panel_3 = project_dashboard.get_panel('raw_usage')
+        self.assertEqual(raw_usage_panel.Project_raw_usage, panel_3.__class__)
