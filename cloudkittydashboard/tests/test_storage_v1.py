@@ -35,6 +35,32 @@ raw_usage = importlib.import_module(
     'cloudkittydashboard.dashboards.project.raw_usage.views')
 
 
+def _v2_dataframes(points, periods=2):
+    per_period, remainder = divmod(points, periods)
+    dataframes = []
+    for index in range(periods):
+        count = per_period + (1 if index < remainder else 0)
+        dataframes.append({
+            'period': {
+                'begin': '2026-07-16T%02d:00:00' % index,
+                'end': '2026-07-16T%02d:00:00' % (index + 1),
+            },
+            'usage': {
+                'instance': [
+                    {'vol': {'qty': '1', 'unit': 'instance'}}
+                ] * count,
+            },
+        })
+    return dataframes
+
+
+def _v2_call_pages(client):
+    return [
+        (call.kwargs['offset'], call.kwargs['limit'])
+        for call in client.dataframes.get_dataframes.call_args_list
+    ]
+
+
 class SummaryStorageVersionTests(unittest.TestCase):
 
     def test_details_template_owns_groupby_partial(self):
@@ -285,46 +311,125 @@ class ReportingStorageVersionTests(unittest.TestCase):
         self.assertTrue(context['queried'])
         self.assertEqual([], context['usage_rows'])
 
-    def test_v2_raw_usage_follows_pagination(self):
+    def test_v2_raw_usage_advances_offset_by_points(self):
         client = mock.Mock()
-        dataframe = {'period': {}, 'usage': {}}
         client.dataframes.get_dataframes.side_effect = [
-            {'total': 101, 'dataframes': [dataframe] * 100},
-            {'total': 101, 'dataframes': [dataframe]},
+            {'total': 10000, 'dataframes': _v2_dataframes(1000)}
+            for _ in range(10)
         ]
 
         result = raw_usage._get_raw_usage_data_v2(
             client, 'project-1', 'instance', 'begin', 'end')
 
-        self.assertEqual(101, len(result['dataframes']))
-        self.assertEqual([
-            mock.call(
-                begin='begin', end='end',
-                filters={
-                    'project_id': 'project-1',
-                    'type': 'instance',
-                }, offset=0, limit=100),
-            mock.call(
-                begin='begin', end='end',
-                filters={
-                    'project_id': 'project-1',
-                    'type': 'instance',
-                }, offset=100, limit=100),
-        ], client.dataframes.get_dataframes.call_args_list)
+        self.assertEqual(10, client.dataframes.get_dataframes.call_count)
+        self.assertEqual(
+            [(index * 1000, 1000) for index in range(10)],
+            _v2_call_pages(client))
+        self.assertEqual(20, len(result['dataframes']))
+        self.assertEqual(
+            10000, raw_usage._count_points(result['dataframes']))
+        self.assertFalse(result['truncated'])
+        client.dataframes.get_dataframes.assert_any_call(
+            begin='begin', end='end',
+            filters={
+                'project_id': 'project-1',
+                'type': 'instance',
+            }, offset=0, limit=1000)
 
     def test_v2_raw_usage_follows_full_pages_without_total(self):
         client = mock.Mock()
-        dataframe = {'period': {}, 'usage': {}}
         client.dataframes.get_dataframes.side_effect = [
-            {'dataframes': [dataframe] * 100},
-            {'dataframes': [dataframe]},
+            {'dataframes': _v2_dataframes(1000)},
+            {'dataframes': _v2_dataframes(1000)},
+            {'dataframes': _v2_dataframes(400)},
         ]
 
         result = raw_usage._get_raw_usage_data_v2(
             client, 'project-1', 'instance', 'begin', 'end')
 
-        self.assertEqual(101, len(result['dataframes']))
-        self.assertEqual(2, client.dataframes.get_dataframes.call_count)
+        self.assertEqual([(0, 1000), (1000, 1000), (2000, 1000)],
+                         _v2_call_pages(client))
+        self.assertEqual(
+            2400, raw_usage._count_points(result['dataframes']))
+        self.assertFalse(result['truncated'])
+
+    def test_v2_raw_usage_stops_on_short_page(self):
+        client = mock.Mock()
+        client.dataframes.get_dataframes.return_value = {
+            'total': 10000, 'dataframes': _v2_dataframes(40),
+        }
+
+        result = raw_usage._get_raw_usage_data_v2(
+            client, 'project-1', 'instance', 'begin', 'end')
+
+        self.assertEqual([(0, 1000)], _v2_call_pages(client))
+        self.assertFalse(result['truncated'])
+
+    def test_v2_raw_usage_stops_at_max_points(self):
+        client = mock.Mock()
+        client.dataframes.get_dataframes.side_effect = [
+            {'total': 10000, 'dataframes': _v2_dataframes(1000)},
+            {'total': 10000, 'dataframes': _v2_dataframes(1000)},
+            {'total': 10000, 'dataframes': _v2_dataframes(500)},
+        ]
+        settings = SimpleNamespace(
+            OPENSTACK_CLOUDKITTY_RAW_USAGE_MAX_POINTS=2500)
+
+        with mock.patch.object(raw_usage, 'settings', settings):
+            result = raw_usage._get_raw_usage_data_v2(
+                client, 'project-1', 'instance', 'begin', 'end')
+
+        self.assertEqual([(0, 1000), (1000, 1000), (2000, 500)],
+                         _v2_call_pages(client))
+        self.assertEqual(
+            2500, raw_usage._count_points(result['dataframes']))
+        self.assertTrue(result['truncated'])
+
+    def test_v2_raw_usage_fits_max_points_exactly(self):
+        client = mock.Mock()
+        client.dataframes.get_dataframes.side_effect = [
+            {'total': 1500, 'dataframes': _v2_dataframes(1000)},
+            {'total': 1500, 'dataframes': _v2_dataframes(500)},
+        ]
+        settings = SimpleNamespace(
+            OPENSTACK_CLOUDKITTY_RAW_USAGE_MAX_POINTS=1500)
+
+        with mock.patch.object(raw_usage, 'settings', settings):
+            result = raw_usage._get_raw_usage_data_v2(
+                client, 'project-1', 'instance', 'begin', 'end')
+
+        self.assertEqual([(0, 1000), (1000, 500)], _v2_call_pages(client))
+        self.assertFalse(result['truncated'])
+
+    def test_v2_raw_usage_zero_max_points_disables_cap(self):
+        client = mock.Mock()
+        client.dataframes.get_dataframes.side_effect = [
+            {'total': 2500, 'dataframes': _v2_dataframes(1000)},
+            {'total': 2500, 'dataframes': _v2_dataframes(1000)},
+            {'total': 2500, 'dataframes': _v2_dataframes(500)},
+        ]
+        settings = SimpleNamespace(
+            OPENSTACK_CLOUDKITTY_RAW_USAGE_MAX_POINTS=0)
+
+        with mock.patch.object(raw_usage, 'settings', settings):
+            result = raw_usage._get_raw_usage_data_v2(
+                client, 'project-1', 'instance', 'begin', 'end')
+
+        self.assertEqual([(0, 1000), (1000, 1000), (2000, 1000)],
+                         _v2_call_pages(client))
+        self.assertFalse(result['truncated'])
+
+    def test_v2_raw_usage_stops_on_page_without_points(self):
+        client = mock.Mock()
+        client.dataframes.get_dataframes.return_value = {
+            'total': 10, 'dataframes': [{'period': {}, 'usage': {}}],
+        }
+
+        result = raw_usage._get_raw_usage_data_v2(
+            client, 'project-1', 'instance', 'begin', 'end')
+
+        self.assertEqual(1, client.dataframes.get_dataframes.call_count)
+        self.assertEqual(1, len(result['dataframes']))
 
     def test_v2_raw_usage_treats_not_found_as_empty(self):
         client = mock.Mock()
@@ -334,7 +439,7 @@ class ReportingStorageVersionTests(unittest.TestCase):
         result = raw_usage._get_raw_usage_data_v2(
             client, 'project-1', 'instance', 'begin', 'end')
 
-        self.assertEqual({'dataframes': []}, result)
+        self.assertEqual({'dataframes': [], 'truncated': False}, result)
 
     @mock.patch.object(raw_usage.api, 'cloudkittyclient')
     @mock.patch.object(raw_usage, '_get_raw_usage_data_v2')
@@ -374,3 +479,63 @@ class ReportingStorageVersionTests(unittest.TestCase):
         )
         self.assertTrue(context['queried'])
         self.assertEqual([], context['usage_rows'])
+        self.assertFalse(context['truncated'])
+
+    @mock.patch.object(raw_usage.api, 'cloudkittyclient')
+    @mock.patch.object(raw_usage, '_get_raw_usage_data_v2')
+    def test_raw_usage_page_reports_truncated_v2_data(
+            self, get_data, client_factory):
+        get_data.return_value = {'dataframes': [], 'truncated': True}
+        client_factory.return_value.info.get_metric.return_value = {
+            'metrics': [{'metric_id': 'instance', 'unit': 'instance'}]
+        }
+        request = SimpleNamespace(
+            GET={
+                'start': '2026-07-01',
+                'end': '2026-07-16',
+                'resource_type': 'instance',
+            },
+            user=SimpleNamespace(tenant_id='project-1'),
+        )
+        view = raw_usage.IndexView()
+        view.request = request
+        settings = SimpleNamespace(
+            OPENSTACK_CLOUDKITTY_STORAGE_VERSION=2,
+            OPENSTACK_CLOUDKITTY_RAW_USAGE_MAX_POINTS=250)
+
+        with mock.patch.object(raw_usage, 'settings', settings):
+            context = view.get_context_data()
+
+        self.assertTrue(context['truncated'])
+        self.assertEqual(250, context['max_points'])
+
+    def test_raw_usage_template_shows_truncation_notice(self):
+        raw_usage_template_dir = os.path.join(
+            os.path.dirname(raw_usage.__file__), 'templates')
+        reporting_template_dir = os.path.join(
+            os.path.dirname(reporting.__file__), 'templates')
+        panel_dirs = {
+            'project/raw_usage': raw_usage_template_dir,
+            'project/reporting': reporting_template_dir,
+        }
+        form = raw_usage.forms.RawUsageFilterForm({
+            'start': '2026-07-01',
+            'end': '2026-07-16',
+            'resource_type': 'instance',
+        }, resource_types=['instance'])
+
+        with mock.patch.dict(loaders.panel_template_dirs, panel_dirs,
+                             clear=True):
+            template = get_template('project/raw_usage/index.html').template
+            context = Context({
+                'form': form,
+                'queried': True,
+                'usage_rows': [],
+                'truncated': True,
+                'max_points': 250,
+            })
+            with context.bind_template(template):
+                output = template.nodelist[0].blocks['main'].render(context)
+
+        self.assertIn('alert-warning', output)
+        self.assertIn('250', output)

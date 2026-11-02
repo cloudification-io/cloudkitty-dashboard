@@ -1,0 +1,11 @@
+---
+fixes:
+  - |
+    The project Raw Usage page paginates the CloudKitty v2 ``dataframes`` API
+    by data points instead of by periods, in pages of 1000 points. Pages no
+    longer overlap, so the same points are not fetched over and over.
+  - |
+    The Raw Usage page stops loading after
+    ``OPENSTACK_CLOUDKITTY_RAW_USAGE_MAX_POINTS`` data points (default
+    ``50000``, ``0`` for no limit) and shows a notice asking for a narrower
+    date range.

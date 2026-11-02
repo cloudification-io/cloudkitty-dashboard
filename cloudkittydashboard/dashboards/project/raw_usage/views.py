@@ -103,12 +103,30 @@ def _build_raw_usage_data_v2(data):
     return sorted(rows, key=_raw_usage_sort_key, reverse=True)
 
 
+def _max_raw_usage_points():
+    max_points = int(getattr(
+        settings, 'OPENSTACK_CLOUDKITTY_RAW_USAGE_MAX_POINTS', 50000))
+    return max_points if max_points > 0 else None
+
+
+def _count_points(dataframes):
+    return sum(
+        len(points)
+        for dataframe in dataframes
+        for points in (dataframe.get('usage') or {}).values())
+
+
 def _get_raw_usage_data_v2(client, tenant_id, resource_type, begin, end):
     dataframes = []
     offset = 0
-    limit = 100
+    page_size = 1000
+    max_points = _max_raw_usage_points()
+    truncated = False
 
     while True:
+        limit = page_size
+        if max_points is not None:
+            limit = min(page_size, max_points - offset)
         try:
             response = client.dataframes.get_dataframes(
                 begin=begin,
@@ -126,17 +144,19 @@ def _get_raw_usage_data_v2(client, tenant_id, resource_type, begin, end):
             raise
 
         page = response.get('dataframes', [])
+        fetched = _count_points(page)
         dataframes.extend(page)
-        offset += len(page)
+        offset += fetched
         total = response.get('total')
-        if not page:
-            break
         if total is not None and offset >= int(total):
             break
-        if total is None and len(page) < limit:
+        if fetched < limit:
+            break
+        if max_points is not None and offset >= max_points:
+            truncated = True
             break
 
-    return {'dataframes': dataframes}
+    return {'dataframes': dataframes, 'truncated': truncated}
 
 
 def _get_time_range(form):
@@ -183,6 +203,7 @@ class IndexView(generic.TemplateView):
         )
         usage_rows = []
         queried = False
+        truncated = False
 
         if form.is_bound and form.is_valid():
             queried = True
@@ -211,10 +232,13 @@ class IndexView(generic.TemplateView):
                     end,
                 )
                 usage_rows = _build_raw_usage_data_v2(data)
+                truncated = data.get('truncated', False)
 
         context.update({
             'form': form,
             'queried': queried,
             'usage_rows': usage_rows,
+            'truncated': truncated,
+            'max_points': _max_raw_usage_points(),
         })
         return context

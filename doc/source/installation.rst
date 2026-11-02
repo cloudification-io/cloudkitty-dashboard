@@ -105,3 +105,12 @@ implementations:
 The project Raw Usage page shows per-period resource quantities for both
 storage API versions. It reads stored quantities independently of their
 rating, so it also displays data rated at zero.
+
+With storage API v2 the Raw Usage page loads at most
+``OPENSTACK_CLOUDKITTY_RAW_USAGE_MAX_POINTS`` data points per query (default
+``50000``) and shows a notice when it stops early. Set it to ``0`` to load
+everything in the selected range:
+
+.. code-block:: python
+
+   OPENSTACK_CLOUDKITTY_RAW_USAGE_MAX_POINTS = 50000
