@@ -40,23 +40,28 @@ def _format_quantity(quantity):
     return format(decimal.Decimal(str(quantity)), 'f')
 
 
+def _split_description(description):
+    resource_key = next((
+        key for key in ('resource_id', 'id', 'instance_id')
+        if description.get(key)
+    ), None)
+    hidden = {'id', 'project_id', 'resource_id', resource_key}
+    details = ', '.join(
+        '{}={}'.format(key, value)
+        for key, value in sorted(description.items())
+        if key not in hidden
+    )
+    return description[resource_key] if resource_key else '-', details
+
+
 def _build_raw_usage_data_v1(data, units):
     rows = []
 
     for dataframe in data.get('dataframes', []):
         for resource in dataframe.get('resources', []):
             metric = resource.get('service', '')
-            description = resource.get('desc') or {}
-            resource_id = next((
-                description[key]
-                for key in ('resource_id', 'id')
-                if description.get(key)
-            ), '-')
-            details = ', '.join(
-                '{}={}'.format(key, value)
-                for key, value in sorted(description.items())
-                if key not in ('id', 'project_id', 'resource_id')
-            )
+            resource_id, details = _split_description(
+                resource.get('desc') or {})
             rows.append({
                 'begin': dataframe.get('begin'),
                 'end': dataframe.get('end'),
@@ -79,16 +84,7 @@ def _build_raw_usage_data_v2(data):
             for point in points:
                 description = dict(point.get('groupby') or {})
                 description.update(point.get('metadata') or {})
-                resource_id = next((
-                    description[key]
-                    for key in ('resource_id', 'id')
-                    if description.get(key)
-                ), '-')
-                details = ', '.join(
-                    '{}={}'.format(key, value)
-                    for key, value in sorted(description.items())
-                    if key not in ('id', 'project_id', 'resource_id')
-                )
+                resource_id, details = _split_description(description)
                 volume = point.get('vol') or {}
                 rows.append({
                     'begin': period.get('begin'),

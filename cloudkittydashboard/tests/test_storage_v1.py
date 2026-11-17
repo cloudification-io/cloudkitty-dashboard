@@ -249,6 +249,82 @@ class ReportingStorageVersionTests(unittest.TestCase):
             'details': 'flavor=m1.small, vcpus=2',
         }], result)
 
+    def test_build_raw_usage_data_v2_uses_instance_id(self):
+        data = {
+            'dataframes': [{
+                'period': {
+                    'begin': '2026-07-16T10:00:00',
+                    'end': '2026-07-16T11:00:00',
+                },
+                'usage': {
+                    'instance': [{
+                        'vol': {'qty': '1', 'unit': 'instance'},
+                        'rating': {'price': '0'},
+                        'groupby': {
+                            'instance_id': 'instance-1',
+                            'project_id': 'project-1',
+                        },
+                        'metadata': {'flavor_name': 'm1.small'},
+                    }],
+                },
+            }],
+        }
+
+        result = raw_usage._build_raw_usage_data_v2(data)
+
+        self.assertEqual('instance-1', result[0]['resource_id'])
+        self.assertEqual('flavor_name=m1.small', result[0]['details'])
+
+    def test_build_raw_usage_data_v2_keeps_instance_id_next_to_id(self):
+        data = {
+            'dataframes': [{
+                'period': {
+                    'begin': '2026-07-16T10:00:00',
+                    'end': '2026-07-16T11:00:00',
+                },
+                'usage': {
+                    'network.incoming.bytes': [{
+                        'vol': {'qty': '5', 'unit': 'MB'},
+                        'rating': {'price': '0'},
+                        'groupby': {
+                            'id': 'interface-1',
+                            'project_id': 'project-1',
+                        },
+                        'metadata': {'instance_id': 'instance-1'},
+                    }],
+                },
+            }],
+        }
+
+        result = raw_usage._build_raw_usage_data_v2(data)
+
+        self.assertEqual('interface-1', result[0]['resource_id'])
+        self.assertEqual('instance_id=instance-1', result[0]['details'])
+
+    def test_build_raw_usage_data_v1_uses_instance_id(self):
+        data = {
+            'dataframes': [{
+                'begin': '2026-07-16T10:00:00',
+                'end': '2026-07-16T11:00:00',
+                'resources': [{
+                    'service': 'instance',
+                    'desc': {
+                        'instance_id': 'instance-1',
+                        'project_id': 'project-1',
+                        'flavor_name': 'm1.small',
+                    },
+                    'volume': '1',
+                    'rating': '0',
+                }],
+            }],
+        }
+
+        result = raw_usage._build_raw_usage_data_v1(
+            data, {'instance': 'instance'})
+
+        self.assertEqual('instance-1', result[0]['resource_id'])
+        self.assertEqual('flavor_name=m1.small', result[0]['details'])
+
     def test_reporting_does_not_include_raw_usage(self):
         self.assertEqual(
             (reporting.CostRepartitionTab,),
